@@ -1,0 +1,204 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Fail if uv.lock is out of date instead of silently re-locking.
+  UV_LOCKED: "1"
+  PYTHON_VERSION: "3.12"
+  PYTHONIOENCODING: utf-8
+  UBER_LOG_FORMAT: text
+  UBER_LOG_LEVEL: WARNING
+  TERRAFORM_VERSION: "1.16.5"
+  TFLINT_VERSION: "v0.64.0"
+
+jobs:
+  lint:
+    name: lint, lockfile, secrets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - name: uv.lock is in sync with pyproject.toml
+        run: uv lock --check
+      - run: uv sync --only-group dev --no-install-project
+      - name: ruff check
+        run: uv run --no-sync ruff check --output-format=github .
+      - name: ruff format
+        run: uv run --no-sync ruff format --check .
+      - name: no committed file over 300 KB
+        run: |
+          big=$(git ls-files -z | xargs -0 -I{} sh -c 'test $(wc -c < "{}") -gt 307200 && echo "{}"' || true)
+          if [ -n "$big" ]; then echo "files over 300 KB:"; echo "$big"; exit 1; fi
+      - name: gitleaks (full history)
+        run: >-
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo"
+          ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --redact --verbose
+
+  unit:
+    name: unit tests (moto in-process)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync
+      - run: uv run pytest tests/unit -q --cov --cov-report=term --cov-report=xml
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-unit
+          path: coverage.xml
+
+  pipeline:
+    name: pipeline on real fixtures (state machine, dbt build, gates, reruns)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync
+      - name: end-to-end + idempotency tests
+        run: uv run pytest tests/e2e -q --durations=10
+      - name: whole batch via the CLI (exit 3 = data-quality gate failed)
+        run: make fixtures-pipeline
+      - name: dbt build on the fixture lake (ci target)
+        env:
+          UBER_DATA_DIR: data/fixture-run
+          DBT_TARGET: ci
+        run: uv run uber-rides transform build
+      - name: data-quality gates (all layers)
+        run: uv run uber-rides --data-dir data/fixture-run dq --month 2026-06
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fixture-site
+          path: site
+
+  dbt-athena:
+    name: dbt compiles for Athena (no AWS calls)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --extra athena
+      - name: dbt parse + compile --target athena
+        env:
+          # Placeholder credentials and an unroutable endpoint: compile must not reach AWS.
+          AWS_ACCESS_KEY_ID: testing
+          AWS_SECRET_ACCESS_KEY: testing
+          AWS_REGION: us-east-1
+          AWS_ENDPOINT_URL: http://127.0.0.1:9
+        run: |
+          uv run --no-sync uber-rides transform --target athena parse
+          uv run --no-sync uber-rides transform --target athena compile --no-introspect --no-populate-cache
+          grep -q approx_percentile dbt/target/compiled/uber_rides/models/marts/demand/mart_hourly_zone_demand.sql
+
+  terraform:
+    name: terraform fmt, validate, tflint, checkov
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+        with:
+          tflint_version: ${{ env.TFLINT_VERSION }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+      - run: tflint --init
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - run: tflint --recursive --format compact
+      - name: checkov (skips are justified inline)
+        run: uvx --from checkov==3.3.26 checkov -d . --framework terraform --compact --quiet
+
+  lambda-image:
+    name: batch-step Lambda image builds
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          tags: uber-rides-batch:ci
+          load: true
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: handler imports inside the image
+        run: >-
+          docker run --rm --entrypoint python uber-rides-batch:ci -c
+          "import uber_rides.orchestration.steps as s, uber_rides.streaming.consumer as c; print(s.DBT_DIR, c.handler)"
+
+  localstack:
+    name: LocalStack integration (Kinesis, DynamoDB, SQS, S3, Step Functions)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      localstack:
+        # Last 4.x community release (no auth token needed), pinned by digest.
+        image: localstack/localstack:4.14.0@sha256:3ebc37595918b8accb852f8048fef2aff047d465167edd655528065b07bc364a
+        ports:
+          - 4566:4566
+        env:
+          SERVICES: kinesis,dynamodb,sqs,s3,stepfunctions,iam,sts
+          KINESIS_LATENCY: "0"
+        options: >-
+          --health-cmd "curl -sf http://localhost:4566/_localstack/health"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+    env:
+      UBER_AWS_ENDPOINT_URL: http://localhost:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync
+      - run: uv run pytest -m integration tests/integration -v
+      - name: CLI replay against LocalStack
+        run: |
+          uv run uber-rides --data-dir data/ls --source-dir tests/fixtures/tlc --weather-dir tests/fixtures/weather ingest --month 2026-06
+          uv run uber-rides --data-dir data/ls load --month 2026-06
+          uv run uber-rides --data-dir data/ls stream --start 2026-06-12T18:00 --end 2026-06-12T18:01 --sample-rate 0.5 --duplicate-every 5 --malformed-every 9

@@ -1,0 +1,81 @@
+name: deploy
+
+# Gated deployment to a real AWS account. It does NOTHING unless the repository variable
+# AWS_DEPLOY_ROLE_ARN is set (Settings -> Secrets and variables -> Actions -> Variables), and it
+# authenticates only through GitHub OIDC (no static keys). The role is created by
+# infra/modules/github_oidc and trusts only this repository's main branch / aws-dev environment.
+# This repository has never been deployed by its author; the workflow is provided so the
+# Terraform can be applied by anyone who forks it into their own account.
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Apply the plan (otherwise plan only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  TERRAFORM_VERSION: "1.16.5"
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  gate:
+    name: deployment configured?
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          ROLE: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          BACKEND: ${{ vars.TF_STATE_BUCKET }}
+        run: |
+          if [ -n "$ROLE" ] && [ -n "$BACKEND" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::AWS_DEPLOY_ROLE_ARN / TF_STATE_BUCKET not set: skipping deployment."
+          fi
+
+  terraform:
+    name: terraform plan / apply (OIDC)
+    needs: gate
+    if: needs.gate.outputs.enabled == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: aws-dev
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: uber-rides-deploy-${{ github.run_id }}
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      - name: terraform init (S3 backend)
+        run: >-
+          terraform init -input=false
+          -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          -backend-config="key=uber-rides-streaming-aws/dev/terraform.tfstate"
+          -backend-config="region=${{ env.AWS_REGION }}"
+          -backend-config="encrypt=true" -backend-config="use_lockfile=true"
+      - run: terraform plan -input=false -var-file=environments/dev.tfvars -out=tfplan
+      - if: inputs.apply
+        run: terraform apply -input=false tfplan

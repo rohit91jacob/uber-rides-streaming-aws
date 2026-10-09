@@ -1,0 +1,120 @@
+name: refresh
+
+# Monthly data refresh. The TLC publishes each month's HVFHV file roughly two months after the
+# month ends (e.g. June around mid-August), so a monthly run on the 25th picks up each new month
+# soon after release. The run finds the newest published month, runs the daily-batch state
+# machine on it (download -> gates -> Iceberg -> sampled streaming replay -> dbt -> gates),
+# reconciles with TLC-published figures and publishes the results site to GitHub Pages.
+# No credentials are needed: every source is public, AWS is emulated in-process (moto), and
+# Pages uses the built-in GITHUB_TOKEN.
+
+on:
+  schedule:
+    - cron: "0 7 25 * *"
+  workflow_dispatch:
+    inputs:
+      month:
+        description: "Month to process (YYYY-MM); empty = newest published"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false
+
+env:
+  UV_LOCKED: "1"
+  PYTHON_VERSION: "3.12"
+  PYTHONIOENCODING: utf-8
+  UBER_DATA_DIR: /home/runner/uber-lake
+  UBER_LOG_FORMAT: json
+  UBER_DUCKDB_MEMORY_LIMIT: 6GB
+
+jobs:
+  build:
+    name: refresh lake + build site
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync
+      - name: Resolve the month
+        id: month
+        run: |
+          month="${{ inputs.month }}"
+          if [ -z "$month" ]; then month=$(uv run --no-sync uber-rides latest-month); fi
+          prev=$(uv run --no-sync python -c "from uber_rides.sources.tlc import previous_months; print(previous_months('$month', 2)[1])")
+          echo "month=$month" >> "$GITHUB_OUTPUT"
+          echo "prev=$prev" >> "$GITHUB_OUTPUT"
+          echo "processing $month (verification also for $prev)"
+      - name: Daily-batch state machine (exit 3 = data-quality gate failed)
+        run: >-
+          uv run --no-sync uber-rides batch --month ${{ steps.month.outputs.month }}
+          --replay-start "${{ steps.month.outputs.month }}-12T17:00" --replay-end "${{ steps.month.outputs.month }}-12T18:00"
+          --replay-sample-rate 0.02 --duplicate-every 7 --malformed-every 11 --replays 2
+      - name: Verify against TLC-published figures (this month and the previous one)
+        run: |
+          uv run --no-sync uber-rides verify --month ${{ steps.month.outputs.month }} > /dev/null
+          # The base aggregate report lags a month more; profile the previous month too (no load).
+          uv run --no-sync uber-rides ingest --month ${{ steps.month.outputs.prev }} --skip-weather > /dev/null
+          uv run --no-sync uber-rides verify --month ${{ steps.month.outputs.prev }} > /dev/null
+          rm -f "$UBER_DATA_DIR"/landing/tlc/fhvhv_tripdata_${{ steps.month.outputs.prev }}.parquet
+      - name: Build the results site
+        run: |
+          uv run --no-sync uber-rides report --out site
+          echo "### Results site" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat site/summary.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+  deploy:
+    name: publish to GitHub Pages
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+  alert:
+    name: open or update a failure issue
+    needs: [build, deploy]
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: Scheduled refresh is failing
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open or comment on the tracking issue
+        run: |
+          body="The scheduled \`refresh\` run failed: $RUN_URL
+
+          See docs/runbook.md#scheduled-refresh-github-actions. Close this issue once a run is green."
+          number=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number,title \
+            --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "Failed again: $RUN_URL"
+          else
+            gh issue create --title "$TITLE" --body "$body"
+          fi
