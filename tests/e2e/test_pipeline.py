@@ -138,6 +138,11 @@ def test_verify_and_report_on_fixtures(lake: Path, tmp_path: Path):
     assert "2,647" in page and "Simulated" in page
     summary = json.loads((tmp_path / "site" / "summary.json").read_text("utf-8"))
     assert summary["trips"] == 2647 and summary["dq_errors"] == 0
+    # README headline figures are produced by the report, with the marts' definitions
+    assert 0 < summary["p50_wait_minutes"] <= summary["p90_wait_minutes"]
+    assert 0 < summary["pct_pickup_within_10_min_unscheduled"] <= 1
+    assert 0 < summary["same_borough_share"] <= 1
+    assert 0 < summary["driver_pay_share_of_fare"] < 1.5
 
 
 def test_rerunning_the_batch_changes_nothing(lake: Path):
@@ -146,6 +151,8 @@ def test_rerunning_the_batch_changes_nothing(lake: Path):
     trips_before = scalar(db, "SELECT count(*) FROM lake.trips")
     # same month again, forced through ingest + load, plus the same replay window again
     assert cli(lake, "batch", "--month", "2026-06", "--force", *REPLAY) == 0
+    rerun = json.loads((lake / "ops" / "batch_runs" / "latest.json").read_text("utf-8"))
+    assert {"IngestMonth", "LoadLake", "ReplayWindow", "Transform"} <= set(rerun["path"])
     assert scalar(db, "SELECT count(*) FROM lake.trips") == trips_before == 2647
     assert fingerprint(db) == before
     # the second replay landed every event again (at-least-once); staging still dedupes

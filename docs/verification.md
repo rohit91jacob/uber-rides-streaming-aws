@@ -65,7 +65,12 @@ test `assert_marts_reconcile_to_trips`).
   fewer). Every one of the 30 days is present in the file and no day is anomalously low, so the
   gap is not an obvious missing day. Possible causes: the monthly report was computed from a
   later or earlier submission than the file on the CDN, or it counts trips the trip file does
-  not carry. We cannot tell which from the public data. The June base aggregate (expected
+  not carry. We cannot tell which from the public data. One pointer: per day, the June file
+  has 2.7% *more* Uber trips than May (508,591 vs 495,317) but 15.8% *fewer* Lyft trips
+  (183,938 vs 218,417); the report's implied total minus the file's Uber rows leaves 5,972,360
+  for Lyft, inside Lyft's January-May 2026 base-aggregate range (5.62M-6.77M), whereas the
+  file's 5,518,128 is below it. So the gap may sit in the Lyft rows of the June file, which
+  would not affect the Uber figures in this project. This is a hypothesis, not a finding. The June base aggregate (expected
   around November 2026) will show whether the Uber/Lyft totals agree with the file, as they did
   exactly for May; the monthly `refresh` workflow re-runs this verification automatically.
 

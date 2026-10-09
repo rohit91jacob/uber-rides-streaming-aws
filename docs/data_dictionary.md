@@ -134,7 +134,7 @@ TLC taxi zone lookup. Partitioned by: none.
 
 ### `uber_lake.weather_hourly`
 
-Open-Meteo hourly reanalysis for central NYC. Partitioned by: none.
+Open-Meteo hourly reanalysis for one grid cell (requested 40.713, -74.006; returned cell centre 40.738, -74.043). Partitioned by: none.
 
 | Column | Type | Description |
 |---|---|---|

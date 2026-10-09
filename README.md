@@ -31,8 +31,8 @@ and corrupted records), and they are labelled as simulated everywhere.
 | Avg trip miles / base fare / driver pay | 5.08 / $29.40 / $22.60 |
 | Driver pay as a share of base fare (fare > 0) | 76.8% |
 | Driver pay + tips as a share of everything the rider paid | 64.9% |
-| Request-to-pickup wait, median / p90 (non-scheduled trips) | 4.7 / 11.3 min |
-| Trips picked up within 10 minutes of the request (non-scheduled trips) | 86.4% |
+| Request-to-pickup wait, median / p90 (trips picked up at or after the request) | 4.7 / 11.3 min |
+| Trips picked up within 10 minutes of the request (not scheduled: request not after driver on scene) | 86.4% |
 | Trips charged the Congestion Relief Zone (CBD) fee | 4,912,000 (32.2%), $7,368,000 at $1.50 each |
 | Airport trips (LGA / JFK / EWR) | 631,116 / 569,840 / 114,750 |
 | Shared-ride requests / matched (match rate) | 412,276 / 256,422 (62.2%) |
@@ -41,7 +41,12 @@ and corrupted records), and they are labelled as simulated everywhere.
 | Streaming replay (2% sample of 17:00-18:00 on 12 June, replayed twice with drills) | 7,194 records read, 2,916 accepted exactly once, 3,748 duplicates absorbed, 530 malformed to the DLQ, 1,936 counter cells = batch recount, 0 mismatches |
 | dbt build | 91 nodes: 90 pass, 1 warning (2 trips logged at > 1,000 miles) |
 | Data-quality gates (landing, lake, stream, marts) | 26 checks, 0 errors |
-| Wall time, whole state machine (Windows laptop, file already cached) | 5 min 21 s |
+| Wall time, whole state machine (Windows laptop, file already cached) | 5 min 21 s idle; 16 min on a heavily loaded machine (review rerun) |
+
+The trip, fare, pay-share, wait, CBD, airport, shared-ride, weather, borough, streaming and
+gate figures are printed by `uber-rides report` (results site and `site/summary.json`); the
+pay + tips share and the airport split are sums over the site's per-borough and per-direction
+tables; dbt counts come from the `transform` step log.
 
 **Verification against the TLC's own published figures** ([docs/verification.md](docs/verification.md)):
 for May 2026 the FHV Base Aggregate Report gives Uber 15,354,816 dispatched trips and Lyft
@@ -150,7 +155,7 @@ ends in `BatchFailed`.
 |---|---|---|---|---|
 | [TLC HVFHV trip records](https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page) `fhvhv_tripdata_YYYY-MM.parquet` | NYC Open Data terms (free use, attribution) | Monthly, ~2-month lag | Everything | Completed trips only (no cancellations, no driver ids); timestamps local without zone; zones 264/265 = unknown (4.7% of Uber trips); a few implausible distances |
 | [Taxi zone lookup](https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv) | NYC Open Data terms | Rarely changes | Borough, zone, airport | Zone-level only, no coordinates |
-| [Open-Meteo historical API](https://open-meteo.com/en/docs/historical-weather-api) | CC BY 4.0 | Daily, ~5-day lag | Weather impact | Reanalysis (ERA5-based) for one point in central NYC, not a station |
+| [Open-Meteo historical API](https://open-meteo.com/en/docs/historical-weather-api) | CC BY 4.0 | Daily, ~5-day lag | Weather impact | Reanalysis (ERA5-based) for one grid cell, not a station: the request is for Lower Manhattan (40.713, -74.006) and the API returns the cell centred at 40.738, -74.043 on the Hudson waterfront |
 | [TLC monthly data reports](https://www.nyc.gov/site/tlc/about/aggregated-reports.page) | NYC Open Data terms | Monthly | Verification | HVFHS class only (Uber + Lyft together), rounded |
 | [FHV Base Aggregate Report](https://data.cityofnewyork.us/Transportation/FHV-Base-Aggregate-Report/2v9c-2k7f) | NYC Open Data terms | Monthly, ~2-3-month lag | Verification | Uber/Lyft shared-trip definitions differ (see verification) |
 

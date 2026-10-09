@@ -153,11 +153,20 @@ def collect(settings: Settings) -> dict[str, Any]:
     try:
         q = lambda sql: _rows(con, sql)  # noqa: E731
         headline = q(
+            # Same definitions as the marts: pay share over trips with a positive base fare
+            # (mart_driver_pay_share), wait percentiles over non-negative waits, and the 10-minute
+            # pickup rate over trips that are not scheduled rides (request after on-scene).
             """SELECT count(*) AS trips, min(request_date), max(request_date), avg(trip_miles), avg(base_fare),
-                      avg(driver_pay), sum(driver_pay) / nullif(sum(base_fare), 0),
+                      avg(driver_pay),
+                      sum(driver_pay) FILTER (WHERE base_fare > 0) / nullif(sum(base_fare) FILTER (WHERE base_fare > 0), 0),
                       avg(CASE WHEN wait_seconds >= 0 THEN wait_seconds END) / 60.0,
                       count(*) FILTER (WHERE is_cbd_charged), count(*) FILTER (WHERE airport_direction IS NOT NULL),
-                      count(*) FILTER (WHERE is_shared_request), count(DISTINCT source_month)
+                      count(*) FILTER (WHERE is_shared_request), count(DISTINCT source_month),
+                      quantile_cont(CASE WHEN wait_seconds >= 0 THEN wait_seconds END, 0.5) / 60.0,
+                      quantile_cont(CASE WHEN wait_seconds >= 0 THEN wait_seconds END, 0.9) / 60.0,
+                      avg(CASE WHEN wait_seconds BETWEEN 0 AND 600 THEN 1.0 ELSE 0.0 END)
+                          FILTER (WHERE NOT is_reservation_like),
+                      avg(CASE WHEN pu_borough = do_borough THEN 1.0 ELSE 0.0 END)
                FROM intermediate.int_trips_enriched"""
         )
         months = q("SELECT DISTINCT source_month FROM intermediate.int_trips_enriched ORDER BY 1")
@@ -240,15 +249,19 @@ def collect(settings: Settings) -> dict[str, Any]:
 def _tiles(h: tuple | None) -> str:
     if not h:
         return '<p class="note">No trips loaded yet.</p>'
-    trips, first, last, miles, fare, pay, share, wait, cbd, airport, shared, _ = h
+    trips, first, last, miles, fare, pay, share, wait, cbd, airport, shared, _ = h[:12]
+    p50, p90, within_10, same_borough = (tuple(h[12:16]) + (None,) * 4)[:4]
     items = [
         ("Uber trips", fmt(trips)),
         ("Request dates", f"{first} to {last}"),
         ("Avg trip miles", fmt(miles)),
         ("Avg base fare", f"${fmt(fare)}"),
         ("Avg driver pay", f"${fmt(pay)}"),
-        ("Driver pay / base fare", pct(share)),
+        ("Driver pay / base fare (fare > 0)", pct(share)),
         ("Avg request-to-pickup wait", f"{fmt(wait, 1)} min"),
+        ("Wait median / p90", f"{fmt(p50, 1)} / {fmt(p90, 1)} min"),
+        ("Picked up within 10 min (not scheduled)", pct(within_10)),
+        ("Same-borough trips", pct(same_borough)),
         ("Trips charged the CBD fee", f"{fmt(cbd)} ({pct(cbd / trips if trips else None)})"),
         ("Airport trips", fmt(airport)),
         ("Shared-ride requests", fmt(shared)),
@@ -478,6 +491,10 @@ def render(data: dict[str, Any], generated: str) -> str:
     )
 
 
+def _round(h: tuple | None, i: int, places: int) -> float | None:
+    return round(float(h[i]), places) if h and len(h) > i and h[i] is not None else None
+
+
 def build_site(settings: Settings, out: Path) -> dict[str, Any]:
     data = collect(settings)
     generated = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
@@ -493,6 +510,10 @@ def build_site(settings: Settings, out: Path) -> dict[str, Any]:
         "avg_driver_pay_usd": round(h[5], 2) if h and h[5] is not None else None,
         "driver_pay_share_of_fare": round(h[6], 4) if h and h[6] is not None else None,
         "avg_wait_minutes": round(h[7], 2) if h and h[7] is not None else None,
+        "p50_wait_minutes": _round(h, 12, 2),
+        "p90_wait_minutes": _round(h, 13, 2),
+        "pct_pickup_within_10_min_unscheduled": _round(h, 14, 4),
+        "same_borough_share": _round(h, 15, 4),
         "stream_reconciled": (data["stream_run"] or {}).get("reconciliation", {}).get("ok"),
         "verification": {m: v["summary"] for m, v in data["verification"].items() if v},
         "dq_errors": sum(
