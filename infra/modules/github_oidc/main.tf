@@ -121,6 +121,25 @@ data "aws_iam_policy_document" "deploy" {
       values   = [var.project_tag]
     }
   }
+  # The deploy role's own name matches role/uber-rides-*, so without this it could rewrite its
+  # own policy or trust and escalate. Changes to this role are applied by an account admin.
+  # Managed-policy attachment is denied everywhere: every role in this stack uses inline policies.
+  statement {
+    sid    = "NoSelfModificationOrManagedPolicies"
+    effect = "Deny"
+    actions = [
+      "iam:AttachRolePolicy", "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:DetachRolePolicy",
+      "iam:UpdateAssumeRolePolicy", "iam:PutRolePermissionsBoundary", "iam:DeleteRolePermissionsBoundary",
+      "iam:UpdateRole", "iam:DeleteRole", "iam:TagRole", "iam:UntagRole",
+    ]
+    resources = ["arn:${var.partition}:iam::${var.account_id}:role/${var.name}-github-deploy"]
+  }
+  statement {
+    sid       = "NoManagedPolicyAttachment"
+    effect    = "Deny"
+    actions   = ["iam:AttachRolePolicy"]
+    resources = ["*"]
+  }
   statement {
     sid       = "TerraformState"
     actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]

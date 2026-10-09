@@ -85,4 +85,9 @@ bucket, `terraform init -backend-config=environments/dev.s3.tfbackend`, review
 `terraform plan -var-file=environments/dev.tfvars`, push the batch image
 (`docker build -t <ecr-url>:<tag> .`) and set `batch_image_uri`. The `deploy` workflow does the
 same through OIDC once the repository variables `AWS_DEPLOY_ROLE_ARN` and `TF_STATE_BUCKET` are
-set. Activate the `project` cost-allocation tag so the budget filter matches.
+set. The state bucket must be named `uber-rides-tfstate-*` (the deploy role's state access is
+scoped to that prefix). The first apply, and any later change to the deploy role itself, must be
+run by an account administrator: the deploy role is explicitly denied from modifying its own
+policies or trust and from attaching managed policies. For a stricter setup, add an IAM
+permissions boundary to the workload roles and require it on role creation.
+Activate the `project` cost-allocation tag so the budget filter matches.

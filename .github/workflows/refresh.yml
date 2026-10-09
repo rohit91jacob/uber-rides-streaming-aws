@@ -47,9 +47,15 @@ jobs:
       - run: uv sync
       - name: Resolve the month
         id: month
+        env:
+          # Passed through the environment (not interpolated into the script) and validated.
+          INPUT_MONTH: ${{ inputs.month }}
         run: |
-          month="${{ inputs.month }}"
+          month="$INPUT_MONTH"
           if [ -z "$month" ]; then month=$(uv run --no-sync uber-rides latest-month); fi
+          if ! printf '%s' "$month" | grep -Eq '^[0-9]{4}-(0[1-9]|1[0-2])$'; then
+            echo "::error::month must be YYYY-MM, got '$month'"; exit 1
+          fi
           prev=$(uv run --no-sync python -c "from uber_rides.sources.tlc import previous_months; print(previous_months('$month', 2)[1])")
           echo "month=$month" >> "$GITHUB_OUTPUT"
           echo "prev=$prev" >> "$GITHUB_OUTPUT"
