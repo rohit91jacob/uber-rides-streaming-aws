@@ -1,0 +1,103 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "uber-rides-streaming-aws"
+version = "0.1.0"
+description = "Uber rides on AWS (emulated): NYC TLC HVFHV trips replayed as ride lifecycle events through Kinesis, Lambda and DynamoDB into Apache Iceberg, modelled with dbt."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12,<3.13"
+authors = [{ name = "rohit91jacob" }]
+keywords = ["uber", "nyc-tlc", "kinesis", "lambda", "dynamodb", "iceberg", "dbt", "duckdb", "streaming"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Database",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+  "boto3>=1.40,<2",
+  "duckdb>=1.4,<2",
+  "pyarrow>=21",
+  # SQL catalog (SQLite) locally; Glue catalog on AWS. fsspec FileIO handles file:// and s3://.
+  "pyiceberg[sql-sqlite,pyarrow,pyiceberg-core,s3fs,glue]>=0.12,<0.13",
+  "requests>=2.32,<3",
+  "dbt-core>=1.10,<1.13",
+  "dbt-duckdb>=1.10,<1.12",
+]
+
+[project.optional-dependencies]
+# Only needed to compile/run the dbt project against Amazon Athena (`--target athena`).
+athena = ["dbt-athena-community>=1.9,<1.12"]
+
+[project.scripts]
+uber-rides = "uber_rides.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/rohit91jacob/uber-rides-streaming-aws"
+Data = "https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page"
+
+[dependency-groups]
+dev = [
+  "moto[server,kinesis,dynamodb,sqs,s3,stepfunctions,glue]>=5.1,<6",
+  "pytest>=9,<10",
+  "pytest-cov>=7,<8",
+  "ruff>=0.16,<0.17",
+  "pre-commit>=4,<5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/uber_rides"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/uber_rides/orchestration/daily_batch.asl.json" = "uber_rides/orchestration/daily_batch.asl.json"
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+src = ["src", "tests"]
+extend-exclude = ["data", "dbt/target", "dbt/dbt_packages", "dbt/logs", "site"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "PTH", "PIE", "RET", "TID", "S", "T20"]
+ignore = [
+  "E501",   # ruff format owns line length; long SQL strings are left intact
+  "RET504", # assign-then-return keeps multi-step transforms readable
+  "S608",   # SQL is assembled from module constants and validated identifiers only
+  "S311",   # random is only used for seeded, deterministic fault-injection drills
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "PTH", "S105", "S106", "S108"]
+# The Lambda handler logs one JSON line to stdout, which CloudWatch Logs ingests.
+"src/uber_rides/streaming/consumer.py" = ["T201"]
+"src/uber_rides/cli.py" = ["T201"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["uber_rides"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+  "e2e: end-to-end pipeline runs on the committed real fixtures (dbt included)",
+  "integration: needs a LocalStack endpoint at UBER_AWS_ENDPOINT_URL",
+]
+filterwarnings = [
+  "ignore::DeprecationWarning",
+  "ignore:Delete operation did not match any records",
+]
+
+[tool.coverage.run]
+source = ["uber_rides"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

@@ -1,0 +1,4 @@
+* text=auto eol=lf
+# Real data fixtures are committed byte-for-byte as published.
+tests/fixtures/** -text
+*.parquet binary

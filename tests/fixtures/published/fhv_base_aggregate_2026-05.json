@@ -1,0 +1,24 @@
+[
+ {
+  "base_license_number": "UBER",
+  "base_name": "UBER",
+  "dba": "UBER",
+  "year": "2026",
+  "month": "5",
+  "month_name": "May",
+  "total_dispatched_trips": "15354816",
+  "total_dispatched_shared_trips": "220904",
+  "unique_dispatched_vehicles": "77541"
+ },
+ {
+  "base_license_number": "LYFT",
+  "base_name": "LYFT",
+  "dba": "LYFT",
+  "year": "2026",
+  "month": "5",
+  "month_name": "May",
+  "total_dispatched_trips": "6770928",
+  "total_dispatched_shared_trips": "2022",
+  "unique_dispatched_vehicles": "54380"
+ }
+]
