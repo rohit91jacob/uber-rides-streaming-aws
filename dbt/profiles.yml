@@ -1,0 +1,28 @@
+uber_rides:
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('UBER_DUCKDB_PATH', '../data/serving/uber.duckdb') }}"
+      threads: "{{ env_var('UBER_DUCKDB_THREADS', '4') | int }}"
+      settings:
+        memory_limit: "{{ env_var('UBER_DUCKDB_MEMORY_LIMIT', '4GB') }}"
+        preserve_insertion_order: false
+    ci:
+      type: duckdb
+      path: "{{ env_var('UBER_DUCKDB_PATH', '../data/serving/uber.duckdb') }}"
+      threads: 2
+      settings:
+        memory_limit: "{{ env_var('UBER_DUCKDB_MEMORY_LIMIT', '2GB') }}"
+    # Amazon Athena (engine v3, Trino) over the Glue catalog. CI only *compiles* against this
+    # target with placeholder credentials; nothing is executed in a real account.
+    athena:
+      type: athena
+      database: awsdatacatalog
+      schema: uber_marts
+      region_name: "{{ env_var('AWS_REGION', 'us-east-1') }}"
+      s3_staging_dir: "{{ env_var('UBER_ATHENA_STAGING_DIR', 's3://uber-rides-athena-results/dbt/') }}"
+      s3_data_dir: "{{ env_var('UBER_ATHENA_DATA_DIR', 's3://uber-rides-lake/dbt/') }}"
+      work_group: "{{ env_var('UBER_ATHENA_WORKGROUP', 'uber-rides') }}"
+      threads: 4
+      num_retries: 2

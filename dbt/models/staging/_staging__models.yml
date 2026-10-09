@@ -1,0 +1,68 @@
+version: 2
+
+models:
+  - name: stg_trips
+    description: Uber trips with renamed columns, the rider total before tips and wait times.
+    columns:
+      - name: trip_id
+        data_tests: [unique, not_null]
+      - name: pu_zone_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_taxi_zones'), field: zone_id}
+      - name: do_zone_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('stg_taxi_zones'), field: zone_id}
+      - name: request_at
+        data_tests: [not_null]
+      - name: trip_miles
+        data_tests:
+          # June 2026 has 2 Uber trips logged at > 1,000 miles in under an hour (recording
+          # errors). They are kept, so this is a warning, not a failure.
+          - between:
+              arguments: {min_value: 0, max_value: 1000}
+              config:
+                severity: warn
+    data_tests:
+      - expression_is_true:
+          arguments:
+            expression: dropoff_at >= pickup_at
+  - name: stg_taxi_zones
+    columns:
+      - name: zone_id
+        data_tests: [unique, not_null]
+      - name: borough
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["Bronx", "Brooklyn", "EWR", "Manhattan", "Queens", "Staten Island", "Unknown", "N/A"]
+  - name: stg_weather_hourly
+    columns:
+      - name: observed_hour
+        data_tests: [unique, not_null]
+      - name: precipitation_mm
+        data_tests:
+          - between:
+              arguments: {min_value: 0, max_value: 200}
+  - name: stg_ride_events
+    description: Deduplicated ride lifecycle events from the streaming path.
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]
+      - name: event_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["requested", "driver_on_scene", "picked_up", "dropped_off"]
+      - name: trip_id
+        data_tests:
+          - relationships:
+              arguments: {to: ref('stg_trips'), field: trip_id}
+  - name: stg_zone_window_counters
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [zone_id, window_start]

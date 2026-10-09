@@ -1,0 +1,38 @@
+name: uber_rides
+version: "1.0.0"
+config-version: 2
+profile: uber_rides
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: target
+clean-targets: ["target", "logs"]
+
+vars:
+  # Uber's High Volume For-Hire Service licence in the TLC files.
+  license_num: "HV0003"
+  # A pickup within this many minutes of the request counts as "fulfilled fast".
+  fast_pickup_minutes: 10
+  # Minimum trips in a cell before a rate is considered stable enough for site charts.
+  min_cell_trips: 30
+
+models:
+  uber_rides:
+    # Athena-only settings; dbt-duckdb ignores them.
+    +table_type: iceberg
+    +format: parquet
+    staging:
+      +schema: staging
+      +materialized: view
+    intermediate:
+      +schema: intermediate
+      +materialized: table
+    marts:
+      +schema: marts
+      +materialized: table
+
+data_tests:
+  uber_rides:
+    +store_failures: false

@@ -1,0 +1,170 @@
+version: 2
+
+models:
+  - name: mart_hourly_zone_demand
+    description: >
+      Requests, wait percentiles and fast-pickup rate per pickup zone and request hour, with
+      dropoffs in the same zone/hour as the supply proxy. TLC records completed trips only, so
+      fulfilment is "picked up within 10 minutes", not "not cancelled".
+    columns:
+      - name: requests
+        data_tests: [not_null]
+      - name: pct_pickup_within_10_min
+        data_tests:
+          - between:
+              arguments: {min_value: 0, max_value: 1}
+      - name: zone_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_zone'), field: zone_id}
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [request_hour, zone_id]
+
+  - name: mart_wait_time_distribution
+    description: Request-to-pickup wait histogram by pickup borough and time band.
+    columns:
+      - name: wait_bucket
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["00-02 min", "02-05 min", "05-10 min", "10-15 min", "15-20 min", "20-30 min", "30+ min"]
+      - name: share_of_cell
+        data_tests:
+          - between:
+              arguments: {min_value: 0, max_value: 1}
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [borough, time_band, wait_bucket]
+
+  - name: mart_wait_time_percentiles
+    description: Wait percentiles (minutes) by pickup borough and time band.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [borough, time_band]
+      - expression_is_true:
+          arguments:
+            expression: p50_wait_minutes <= p90_wait_minutes and p90_wait_minutes <= p95_wait_minutes
+
+  - name: mart_weather_demand
+    description: City-wide requests per hour with the hour's weather and a weekday-hour demand index.
+    columns:
+      - name: request_hour
+        data_tests: [unique, not_null]
+      - name: demand_index
+        data_tests:
+          - between:
+              arguments: {min_value: 0, max_value: 10}
+
+  - name: mart_weather_demand_summary
+    description: Average demand index and wait by precipitation band.
+    columns:
+      - name: precipitation_band
+        data_tests: [unique, not_null]
+
+  - name: mart_driver_pay_share
+    description: Driver pay as a share of the base fare and of rider spend, per date and pickup borough.
+    columns:
+      - name: driver_pay_share_of_fare
+        data_tests:
+          - between:
+              arguments: {min_value: 0, max_value: 5}
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [request_date, borough]
+
+  - name: mart_airport_trips
+    description: Daily trips to/from JFK, LGA and EWR with fares, distance, airport fees and wait.
+    columns:
+      - name: airport_code
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["JFK", "LGA", "EWR"]
+      - name: airport_direction
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["from_airport", "to_airport", "airport_to_airport"]
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [request_date, airport_code, airport_direction]
+
+  - name: mart_cbd_congestion_fee
+    description: >
+      Congestion Relief Zone fee: charged vs uncharged trips by hour of day and weekend flag.
+      Descriptive comparison, not a causal estimate.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [request_hour_of_day, is_weekend, is_cbd_charged]
+      - expression_is_true:
+          arguments:
+            expression: is_cbd_charged or cbd_fee_usd = 0
+
+  - name: mart_shared_rides
+    description: Shared-ride requests, matches and match rate per date and pickup borough.
+    columns:
+      - name: match_rate
+        data_tests:
+          - between:
+              arguments: {min_value: 0, max_value: 1}
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [request_date, borough]
+      - expression_is_true:
+          arguments:
+            expression: shared_matches <= shared_requests
+
+  - name: mart_borough_flows
+    description: Pickup-borough x dropoff-borough trip matrix.
+    columns:
+      - name: share_of_trips
+        data_tests:
+          - between:
+              arguments: {min_value: 0, max_value: 1}
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [pu_borough, do_borough]
+
+  - name: mart_stream_zone_supply_demand
+    description: Real-time zone/window supply-demand counters (DynamoDB export) with zone names.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [window_start, zone_id]
+      - expression_is_true:
+          arguments:
+            expression: surge_proxy >= 0
+
+  - name: mart_stream_event_summary
+    description: Distinct landed events per lifecycle type from the streaming path.
+    columns:
+      - name: event_type
+        data_tests: [unique]
+
+  - name: dim_zone
+    description: TLC taxi zones with borough, service zone and airport code.
+    columns:
+      - name: zone_id
+        data_tests: [unique, not_null]
+
+  - name: fct_daily_summary
+    description: Headline numbers per request date.
+    columns:
+      - name: request_date
+        data_tests: [unique, not_null]
+      - name: trips
+        data_tests:
+          - between:
+              arguments: {min_value: 1, max_value: 10000000}

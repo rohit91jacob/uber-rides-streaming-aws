@@ -1,0 +1,32 @@
+version: 2
+
+sources:
+  - name: lake
+    description: >
+      Apache Iceberg tables written by the Python loaders. Locally they are DuckDB views over the
+      current snapshot's data files (`uber-rides publish`); on AWS they are Glue Data Catalog tables
+      read by Athena.
+    schema: "{{ 'uber_lake' if target.type == 'athena' else 'lake' }}"
+    tables:
+      - name: trips
+        description: Cleaned Uber (HV0003) trips, one row per TLC HVFHV trip record.
+        columns:
+          - name: trip_id
+            data_tests: [unique, not_null]
+          - name: pickup_datetime
+            data_tests: [not_null]
+      - name: trips_quarantine
+        description: Trips that failed a hard validity rule (audit only).
+      - name: taxi_zones
+        description: TLC taxi zone lookup (265 zones).
+        columns:
+          - name: location_id
+            data_tests: [unique, not_null]
+      - name: weather_hourly
+        description: Open-Meteo hourly reanalysis for central NYC (local time).
+      - name: ride_events
+        description: Ride lifecycle events landed by the Kinesis consumer (at-least-once).
+      - name: zone_window_counters
+        description: Export of the real-time DynamoDB zone supply/demand counters.
+      - name: stream_dlq
+        description: Records the consumer dead-lettered to SQS.

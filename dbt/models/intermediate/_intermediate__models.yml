@@ -1,0 +1,23 @@
+version: 2
+
+models:
+  - name: int_trips_enriched
+    description: One row per trip with zone, borough, airport, time-band, wait-bucket and weather attributes.
+    columns:
+      - name: trip_id
+        data_tests: [unique, not_null]
+      - name: pu_borough
+        data_tests: [not_null]
+      - name: do_borough
+        data_tests: [not_null]
+      - name: time_band
+        data_tests: [not_null]
+      - name: airport_direction
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["from_airport", "to_airport", "airport_to_airport"]
+    data_tests:
+      - row_count_matches:
+          arguments:
+            compare_model: ref('stg_trips')

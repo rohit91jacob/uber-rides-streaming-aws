@@ -1,0 +1,355 @@
+{
+  "Comment": "Uber rides daily batch: land any new TLC month, load Iceberg, gate, fold in the streaming landing zone, run dbt, gate the marts. Triggered daily by EventBridge Scheduler. ${BatchStepFunctionArn} is substituted by Terraform (templatefile) and by the local runner.",
+  "StartAt": "ResolveMonth",
+  "States": {
+    "ResolveMonth": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${BatchStepFunctionArn}",
+        "Payload": {
+          "step": "resolve_month",
+          "input.$": "$"
+        }
+      },
+      "ResultSelector": {
+        "month.$": "$.Payload.month",
+        "is_new.$": "$.Payload.is_new"
+      },
+      "ResultPath": "$.resolved",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.TooManyRequestsException",
+            "States.Timeout"
+          ],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "NewMonth?"
+    },
+    "NewMonth?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.resolved.is_new",
+          "BooleanEquals": true,
+          "Next": "IngestMonth"
+        }
+      ],
+      "Default": "ReplayRequested?"
+    },
+    "IngestMonth": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${BatchStepFunctionArn}",
+        "Payload": {
+          "step": "ingest",
+          "month.$": "$.resolved.month"
+        }
+      },
+      "ResultSelector": {
+        "trips_changed.$": "$.Payload.trips_changed"
+      },
+      "ResultPath": "$.ingest",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 300,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "BatchFailed"
+        }
+      ],
+      "Next": "GateLanding"
+    },
+    "GateLanding": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${BatchStepFunctionArn}",
+        "Payload": {
+          "step": "dq",
+          "layer": "landing",
+          "month.$": "$.resolved.month"
+        }
+      },
+      "ResultSelector": {
+        "errors.$": "$.Payload.errors"
+      },
+      "ResultPath": "$.dq_landing",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "BatchFailed"
+        }
+      ],
+      "Next": "LandingPassed?"
+    },
+    "LandingPassed?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.dq_landing.errors",
+          "NumericGreaterThan": 0,
+          "Next": "QualityGateFailed"
+        }
+      ],
+      "Default": "LoadLake"
+    },
+    "LoadLake": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${BatchStepFunctionArn}",
+        "Payload": {
+          "step": "load",
+          "month.$": "$.resolved.month"
+        }
+      },
+      "ResultSelector": {
+        "trips_written.$": "$.Payload.trips_written",
+        "quarantine_written.$": "$.Payload.quarantine_written"
+      },
+      "ResultPath": "$.load",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "BatchFailed"
+        }
+      ],
+      "Next": "GateLake"
+    },
+    "GateLake": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${BatchStepFunctionArn}",
+        "Payload": {
+          "step": "dq",
+          "layer": "lake",
+          "month.$": "$.resolved.month"
+        }
+      },
+      "ResultSelector": {
+        "errors.$": "$.Payload.errors"
+      },
+      "ResultPath": "$.dq_lake",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "BatchFailed"
+        }
+      ],
+      "Next": "LakePassed?"
+    },
+    "LakePassed?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.dq_lake.errors",
+          "NumericGreaterThan": 0,
+          "Next": "QualityGateFailed"
+        }
+      ],
+      "Default": "ReplayRequested?"
+    },
+    "ReplayRequested?": {
+      "Type": "Choice",
+      "Comment": "Demo/backfill only: on AWS the producer runs continuously and this branch is skipped.",
+      "Choices": [
+        {
+          "Variable": "$.replay",
+          "IsPresent": true,
+          "Next": "ReplayWindow"
+        }
+      ],
+      "Default": "LoadEvents"
+    },
+    "ReplayWindow": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${BatchStepFunctionArn}",
+        "Payload": {
+          "step": "replay",
+          "replay.$": "$.replay"
+        }
+      },
+      "ResultSelector": {
+        "reconciled.$": "$.Payload.reconciled"
+      },
+      "ResultPath": "$.replay_result",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "BatchFailed"
+        }
+      ],
+      "Next": "LoadEvents"
+    },
+    "LoadEvents": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${BatchStepFunctionArn}",
+        "Payload": {
+          "step": "load_events"
+        }
+      },
+      "ResultSelector": {
+        "rows_loaded.$": "$.Payload.rows_loaded"
+      },
+      "ResultPath": "$.events",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "BatchFailed"
+        }
+      ],
+      "Next": "GateStream"
+    },
+    "GateStream": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${BatchStepFunctionArn}",
+        "Payload": {
+          "step": "dq",
+          "layer": "stream",
+          "month.$": "$.resolved.month"
+        }
+      },
+      "ResultSelector": {
+        "errors.$": "$.Payload.errors"
+      },
+      "ResultPath": "$.dq_stream",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "BatchFailed"
+        }
+      ],
+      "Next": "StreamPassed?"
+    },
+    "StreamPassed?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.dq_stream.errors",
+          "NumericGreaterThan": 0,
+          "Next": "QualityGateFailed"
+        }
+      ],
+      "Default": "Transform"
+    },
+    "Transform": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Comment": "dbt build (models + tests). Fails the task if any model or test fails.",
+      "Parameters": {
+        "FunctionName": "${BatchStepFunctionArn}",
+        "Payload": {
+          "step": "transform"
+        }
+      },
+      "ResultSelector": {
+        "dbt_ok.$": "$.Payload.ok"
+      },
+      "ResultPath": "$.transform",
+      "TimeoutSeconds": 900,
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "BatchFailed"
+        }
+      ],
+      "Next": "GateMarts"
+    },
+    "GateMarts": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${BatchStepFunctionArn}",
+        "Payload": {
+          "step": "dq",
+          "layer": "marts",
+          "month.$": "$.resolved.month"
+        }
+      },
+      "ResultSelector": {
+        "errors.$": "$.Payload.errors"
+      },
+      "ResultPath": "$.dq_marts",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "BatchFailed"
+        }
+      ],
+      "Next": "MartsPassed?"
+    },
+    "MartsPassed?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.dq_marts.errors",
+          "NumericGreaterThan": 0,
+          "Next": "QualityGateFailed"
+        }
+      ],
+      "Default": "BatchSucceeded"
+    },
+    "QualityGateFailed": {
+      "Type": "Fail",
+      "Error": "DataQualityGateFailed",
+      "Cause": "An error-level data-quality check failed; see uber_lake_ops.dq_results."
+    },
+    "BatchFailed": {
+      "Type": "Fail",
+      "Error": "BatchStepFailed",
+      "Cause": "A batch step raised; see the step's CloudWatch logs."
+    },
+    "BatchSucceeded": {
+      "Type": "Succeed"
+    }
+  }
+}
