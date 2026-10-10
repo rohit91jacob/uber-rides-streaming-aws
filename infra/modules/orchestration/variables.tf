@@ -43,6 +43,11 @@ variable "athena_workgroup" {
   type        = string
 }
 
+variable "athena_results_bucket_arn" {
+  description = "ARN of the bucket Athena writes query results to."
+  type        = string
+}
+
 variable "glue_database_arns" {
   description = "Glue database ARNs the batch may read and write."
   type        = list(string)

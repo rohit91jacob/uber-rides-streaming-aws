@@ -77,15 +77,17 @@ module "orchestration" {
   lake_bucket_arn     = module.lake.lake_bucket_arn
   athena_workgroup    = module.lake.athena_workgroup_name
   glue_database_arns  = module.lake.glue_database_arns
-  counters_table_arn  = module.streaming.counters_table_arn
-  dlq_arn             = module.streaming.dlq_arn
-  dlq_name            = module.streaming.dlq_name
-  counters_table_name = module.streaming.counters_table_name
-  alarm_topic_arn     = module.streaming.alarm_topic_arn
-  log_retention_days  = var.log_retention_days
-  region              = var.region
-  account_id          = data.aws_caller_identity.current.account_id
-  partition           = data.aws_partition.current.partition
+
+  athena_results_bucket_arn = module.lake.athena_results_bucket_arn
+  counters_table_arn        = module.streaming.counters_table_arn
+  dlq_arn                   = module.streaming.dlq_arn
+  dlq_name                  = module.streaming.dlq_name
+  counters_table_name       = module.streaming.counters_table_name
+  alarm_topic_arn           = module.streaming.alarm_topic_arn
+  log_retention_days        = var.log_retention_days
+  region                    = var.region
+  account_id                = data.aws_caller_identity.current.account_id
+  partition                 = data.aws_partition.current.partition
 
   role_path                = local.role_path
   permissions_boundary_arn = module.workload_boundary.arn

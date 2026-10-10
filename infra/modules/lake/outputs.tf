@@ -13,6 +13,11 @@ output "athena_results_bucket_name" {
   value       = module.athena_results_bucket.name
 }
 
+output "athena_results_bucket_arn" {
+  description = "ARN of the Athena query results bucket."
+  value       = module.athena_results_bucket.arn
+}
+
 output "athena_workgroup_name" {
   description = "Athena workgroup name."
   value       = aws_athena_workgroup.this.name

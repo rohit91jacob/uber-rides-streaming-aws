@@ -89,6 +89,21 @@ data "aws_iam_policy_document" "batch" {
     resources = ["arn:${var.partition}:athena:${var.region}:${var.account_id}:workgroup/${var.athena_workgroup}"]
   }
   statement {
+    sid       = "AthenaResultsObjects"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:AbortMultipartUpload"]
+    resources = ["${var.athena_results_bucket_arn}/*"]
+  }
+  statement {
+    sid       = "AthenaResultsList"
+    actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
+    resources = [var.athena_results_bucket_arn]
+  }
+  statement {
+    sid       = "OwnDlq"
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.batch_dlq.arn]
+  }
+  statement {
     sid       = "ExportCounters"
     actions   = ["dynamodb:Scan", "dynamodb:DescribeTable"]
     resources = [var.counters_table_arn]
