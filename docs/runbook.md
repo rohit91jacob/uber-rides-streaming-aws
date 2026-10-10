@@ -86,8 +86,19 @@ bucket, `terraform init -backend-config=environments/dev.s3.tfbackend`, review
 (`docker build -t <ecr-url>:<tag> .`) and set `batch_image_uri`. The `deploy` workflow does the
 same through OIDC once the repository variables `AWS_DEPLOY_ROLE_ARN` and `TF_STATE_BUCKET` are
 set. The state bucket must be named `uber-rides-tfstate-*` (the deploy role's state access is
-scoped to that prefix). The first apply, and any later change to the deploy role itself, must be
-run by an account administrator: the deploy role is explicitly denied from modifying its own
-policies or trust and from attaching managed policies. For a stricter setup, add an IAM
-permissions boundary to the workload roles and require it on role creation.
+scoped to that prefix). The first apply, and any later change to the deploy role or to the
+workload permissions boundary (`<name>-workload-boundary`), must be run by an account
+administrator: the deploy role is explicitly denied from modifying its own policies or trust,
+from attaching managed policies, from creating, editing or deleting the boundary policy, and from
+removing a permissions boundary from any role.
+
+Workload roles (consumer, batch-step, Step Functions, Scheduler) live under the IAM path
+`/<name>/` and all carry that boundary. The deploy role can create a role or change its inline
+policies only under that path and only when the role has the boundary
+(`iam:PermissionsBoundary` condition), and can pass each role only to its own service
+(`iam:PassedToService`: Lambda, Step Functions, Scheduler). So a widened inline policy is still
+capped at the boundary: this project's stream, tables, queues, lake and Athena buckets, Glue
+databases, Athena workgroup, KMS key, log groups and X-Ray, with no IAM actions. The boundary does
+not stop the deploy role from using the project resources it already manages directly, and none of
+this has been exercised against a real account.
 Activate the `project` cost-allocation tag so the budget filter matches.

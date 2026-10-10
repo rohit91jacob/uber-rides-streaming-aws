@@ -51,8 +51,10 @@ data "aws_iam_policy_document" "assume_lambda" {
 }
 
 resource "aws_iam_role" "batch" {
-  name               = "${var.name}-batch-step"
-  assume_role_policy = data.aws_iam_policy_document.assume_lambda.json
+  name                 = "${var.name}-batch-step"
+  path                 = var.role_path
+  assume_role_policy   = data.aws_iam_policy_document.assume_lambda.json
+  permissions_boundary = var.permissions_boundary_arn
 }
 
 data "aws_iam_policy_document" "batch" {
@@ -203,8 +205,10 @@ data "aws_iam_policy_document" "assume_states" {
 }
 
 resource "aws_iam_role" "sfn" {
-  name               = "${var.name}-daily-batch-sfn"
-  assume_role_policy = data.aws_iam_policy_document.assume_states.json
+  name                 = "${var.name}-daily-batch-sfn"
+  path                 = var.role_path
+  assume_role_policy   = data.aws_iam_policy_document.assume_states.json
+  permissions_boundary = var.permissions_boundary_arn
 }
 
 data "aws_iam_policy_document" "sfn" {
@@ -285,8 +289,10 @@ data "aws_iam_policy_document" "assume_scheduler" {
 }
 
 resource "aws_iam_role" "scheduler" {
-  name               = "${var.name}-daily-batch-scheduler"
-  assume_role_policy = data.aws_iam_policy_document.assume_scheduler.json
+  name                 = "${var.name}-daily-batch-scheduler"
+  path                 = var.role_path
+  assume_role_policy   = data.aws_iam_policy_document.assume_scheduler.json
+  permissions_boundary = var.permissions_boundary_arn
 }
 
 data "aws_iam_policy_document" "scheduler" {

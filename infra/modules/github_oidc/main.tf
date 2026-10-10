@@ -17,7 +17,10 @@ resource "aws_iam_openid_connect_provider" "github" {
 }
 
 locals {
-  provider_arn = var.create_provider ? aws_iam_openid_connect_provider.github[0].arn : "arn:${var.partition}:iam::${var.account_id}:oidc-provider/token.actions.githubusercontent.com"
+  # Workload roles are arn:...:role<path><name>-<role>; the deploy role is outside that path.
+  workload_role_prefix = "arn:${var.partition}:iam::${var.account_id}:role${var.workload_role_path}${var.name}-"
+  workload_role_arns   = "${local.workload_role_prefix}*"
+  provider_arn         = var.create_provider ? aws_iam_openid_connect_provider.github[0].arn : "arn:${var.partition}:iam::${var.account_id}:oidc-provider/token.actions.githubusercontent.com"
 }
 
 data "aws_iam_policy_document" "assume" {
@@ -100,45 +103,70 @@ data "aws_iam_policy_document" "deploy" {
     }
   }
   statement {
-    sid     = "ProjectBucketsAndRoles"
-    actions = ["s3:*", "iam:*Role*", "iam:*RolePolicy", "iam:PassRole", "glue:*Database*", "glue:*Table*", "glue:PutDataCatalogEncryptionSettings"]
+    sid     = "ProjectBucketsAndCatalog"
+    actions = ["s3:*", "glue:*Database*", "glue:*Table*", "glue:PutDataCatalogEncryptionSettings"]
     resources = [
       "arn:${var.partition}:s3:::uber-rides-*",
       "arn:${var.partition}:s3:::uber-rides-*/*",
-      "arn:${var.partition}:iam::${var.account_id}:role/uber-rides-*",
       "arn:${var.partition}:glue:*:${var.account_id}:catalog",
       "arn:${var.partition}:glue:*:${var.account_id}:database/uber_*",
       "arn:${var.partition}:glue:*:${var.account_id}:table/uber_*/*",
     ]
   }
+  # Workload roles: only under the project's IAM path and name prefix, and only while they carry
+  # the workload permissions boundary. A role's effective permissions are capped by the boundary,
+  # so inline policies the deploy role writes cannot grant more than the boundary allows.
   statement {
-    sid       = "UseProjectKey"
-    actions   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey*", "kms:CreateGrant", "kms:DescribeKey"]
-    resources = ["arn:${var.partition}:kms:*:${var.account_id}:key/*"]
+    sid = "WorkloadRolePermissionsRequireBoundary"
+    actions = [
+      "iam:CreateRole", "iam:PutRolePolicy", "iam:AttachRolePolicy", "iam:PutRolePermissionsBoundary",
+      "iam:DeleteRolePolicy", "iam:DetachRolePolicy",
+    ]
+    resources = [local.workload_role_arns]
     condition {
       test     = "StringEquals"
-      variable = "aws:ResourceTag/project"
-      values   = [var.project_tag]
+      variable = "iam:PermissionsBoundary"
+      values   = [var.permissions_boundary_arn]
     }
   }
-  # The deploy role's own name matches role/uber-rides-*, so without this it could rewrite its
-  # own policy or trust and escalate. Changes to this role are applied by an account admin.
-  # Managed-policy attachment is denied everywhere: every role in this stack uses inline policies.
   statement {
-    sid    = "NoSelfModificationOrManagedPolicies"
-    effect = "Deny"
+    sid = "WorkloadRoleLifecycle"
     actions = [
-      "iam:AttachRolePolicy", "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:DetachRolePolicy",
-      "iam:UpdateAssumeRolePolicy", "iam:PutRolePermissionsBoundary", "iam:DeleteRolePermissionsBoundary",
-      "iam:UpdateRole", "iam:DeleteRole", "iam:TagRole", "iam:UntagRole",
+      "iam:UpdateRole", "iam:UpdateRoleDescription", "iam:UpdateAssumeRolePolicy", "iam:DeleteRole",
+      "iam:TagRole", "iam:UntagRole",
     ]
-    resources = ["arn:${var.partition}:iam::${var.account_id}:role/${var.name}-github-deploy"]
+    resources = [local.workload_role_arns]
+  }
+  # PassRole only for the workload roles, and only to the service each role is for.
+  statement {
+    sid       = "PassLambdaRoles"
+    actions   = ["iam:PassRole"]
+    resources = [for r in ["consumer", "batch-step"] : "${local.workload_role_prefix}${r}"]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["lambda.amazonaws.com"]
+    }
   }
   statement {
-    sid       = "NoManagedPolicyAttachment"
-    effect    = "Deny"
-    actions   = ["iam:AttachRolePolicy"]
-    resources = ["*"]
+    sid       = "PassStatesRole"
+    actions   = ["iam:PassRole"]
+    resources = ["${local.workload_role_prefix}daily-batch-sfn"]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["states.amazonaws.com"]
+    }
+  }
+  statement {
+    sid       = "PassSchedulerRole"
+    actions   = ["iam:PassRole"]
+    resources = ["${local.workload_role_prefix}daily-batch-scheduler"]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["scheduler.amazonaws.com"]
+    }
   }
   statement {
     sid       = "TerraformState"

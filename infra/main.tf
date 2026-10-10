@@ -1,6 +1,8 @@
 locals {
   project = "uber-rides-streaming-aws"
   name    = "uber-rides-${var.environment}"
+  # Workload roles live under this IAM path; the deploy role can only manage roles there.
+  role_path = "/${local.name}/"
   tags = {
     project     = local.project
     environment = var.environment
@@ -20,6 +22,18 @@ module "kms" {
   account_id = data.aws_caller_identity.current.account_id
   region     = var.region
   partition  = data.aws_partition.current.partition
+}
+
+module "workload_boundary" {
+  source = "./modules/workload_boundary"
+
+  name               = local.name
+  path               = local.role_path
+  kms_key_arn        = module.kms.key_arn
+  glue_database_arns = module.lake.glue_database_arns
+  region             = var.region
+  account_id         = data.aws_caller_identity.current.account_id
+  partition          = data.aws_partition.current.partition
 }
 
 module "lake" {
@@ -45,6 +59,9 @@ module "streaming" {
   source_dir             = "${path.root}/../src/uber_rides"
   log_retention_days     = var.log_retention_days
   alarm_email            = var.alarm_email
+
+  role_path                = local.role_path
+  permissions_boundary_arn = module.workload_boundary.arn
 }
 
 module "orchestration" {
@@ -69,6 +86,9 @@ module "orchestration" {
   region              = var.region
   account_id          = data.aws_caller_identity.current.account_id
   partition           = data.aws_partition.current.partition
+
+  role_path                = local.role_path
+  permissions_boundary_arn = module.workload_boundary.arn
 }
 
 module "budget" {
@@ -91,4 +111,7 @@ module "github_oidc" {
   account_id      = data.aws_caller_identity.current.account_id
   partition       = data.aws_partition.current.partition
   project_tag     = local.project
+
+  workload_role_path       = local.role_path
+  permissions_boundary_arn = module.workload_boundary.arn
 }

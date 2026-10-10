@@ -171,8 +171,10 @@ data "aws_iam_policy_document" "assume_lambda" {
 }
 
 resource "aws_iam_role" "consumer" {
-  name               = "${var.name}-consumer"
-  assume_role_policy = data.aws_iam_policy_document.assume_lambda.json
+  name                 = "${var.name}-consumer"
+  path                 = var.role_path
+  assume_role_policy   = data.aws_iam_policy_document.assume_lambda.json
+  permissions_boundary = var.permissions_boundary_arn
 }
 
 data "aws_iam_policy_document" "consumer" {

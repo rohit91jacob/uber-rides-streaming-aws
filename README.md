@@ -134,7 +134,7 @@ ends in `BatchFailed`.
 | dbt | `dbt/` | staging -> intermediate -> 14 marts, 71 data tests incl. 2 singular reconciliation tests; DuckDB and Athena targets |
 | Orchestration | `orchestration/daily_batch.asl.json`, `asl.py`, `steps.py` | ASL definition shared by Terraform and a local interpreter (Task/Choice/Retry/Catch), Lambda step handler |
 | Results site | `report.py` | Static HTML + `summary.json` from the marts and ops JSON |
-| Infrastructure | `infra/` | Terraform: KMS, S3 + Glue + Athena, Kinesis + Lambda + DynamoDB + SQS + alarms, Step Functions + Scheduler + ECR, budget, GitHub OIDC deploy role |
+| Infrastructure | `infra/` | Terraform: KMS, S3 + Glue + Athena, Kinesis + Lambda + DynamoDB + SQS + alarms, Step Functions + Scheduler + ECR, budget, GitHub OIDC deploy role (workload roles capped by a permissions boundary; see the runbook) |
 
 ## Tech stack
 

@@ -92,3 +92,13 @@ variable "dlq_name" {
   description = "Invalid-records queue name (UBER_DLQ_QUEUE for the batch drain)."
   type        = string
 }
+
+variable "role_path" {
+  description = "IAM path for the workload roles; the deploy role may only manage roles under it."
+  type        = string
+}
+
+variable "permissions_boundary_arn" {
+  description = "Permissions boundary attached to every workload role."
+  type        = string
+}
