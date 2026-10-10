@@ -2,7 +2,7 @@
 # CI builds it to prove it builds; only the gated deploy workflow pushes it to ECR.
 FROM ghcr.io/astral-sh/uv:0.10.2 AS uv
 
-FROM public.ecr.aws/lambda/python:3.12 AS build
+FROM public.ecr.aws/lambda/python:3.14 AS build
 COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /build
 COPY pyproject.toml uv.lock README.md LICENSE ./
@@ -12,7 +12,7 @@ RUN uv export --frozen --no-dev --extra athena --no-emit-project -o requirements
  && uv pip install --no-cache --target "${LAMBDA_TASK_ROOT}" -r requirements.txt \
  && uv pip install --no-cache --no-deps --target "${LAMBDA_TASK_ROOT}" .
 
-FROM public.ecr.aws/lambda/python:3.12
+FROM public.ecr.aws/lambda/python:3.14
 COPY --from=build ${LAMBDA_TASK_ROOT} ${LAMBDA_TASK_ROOT}
 COPY dbt ${LAMBDA_TASK_ROOT}/dbt
 ENV UBER_DBT_DIR=${LAMBDA_TASK_ROOT}/dbt \
