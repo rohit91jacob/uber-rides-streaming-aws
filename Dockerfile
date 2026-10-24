@@ -1,6 +1,6 @@
 # Batch-step Lambda image for the Step Functions Task states (ingest, load, gates, dbt).
 # CI builds it to prove it builds; only the gated deploy workflow pushes it to ECR.
-FROM ghcr.io/astral-sh/uv:0.10.2 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.5 AS uv
 
 FROM public.ecr.aws/lambda/python:3.12 AS build
 COPY --from=uv /uv /usr/local/bin/uv
